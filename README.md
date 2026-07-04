@@ -15,6 +15,7 @@ Obi currently supports:
 - Building responses with status codes, headers, and plain-text or binary payloads
 - Returning standard errors such as 400, 404, and 405
 - Logging basic request/response information for development
+- Keep-alive support for persistent connections (HTTP/1.1 style)
 
 ## Project status
 
@@ -22,7 +23,6 @@ This project is an early-stage framework with a simple architecture and a clear 
 
 The next planned features are:
 
-- Keep-alive support
 - Request context handling
 - Middleware support
 
@@ -37,13 +37,7 @@ You can install Odin by following the official instructions at the Odin website.
 From the repository root, build the sample application:
 
 ```bash
-odin build main.odin -file -out:odin-web
-```
-
-Run the server:
-
-```bash
-./odin-web
+odin run example.odin -file -collection:obi=obi
 ```
 
 The sample server will listen on `127.0.0.1:8080`.
@@ -174,8 +168,7 @@ obi.response_write_string(res, "{\"ok\":true}")
 
 Obi is already usable for basic HTTP server tasks, but it is still an early implementation. Some important limitations to keep in mind:
 
-- The current server uses a simple HTTP/1.0-style model with one request per connection
-- Keep-alive is not yet implemented
+- Keep-alive is supported (persistent connections), allowing multiple requests per connection
 - Middleware and request context support are not yet available
 - The framework is focused on core request/response flow rather than advanced web features
 
@@ -185,11 +178,10 @@ These limitations are intentional while the library is still evolving.
 
 Planned improvements include:
 
-1. Keep-alive support for persistent connections
-2. Context propagation for handlers and middleware
-3. Middleware registration and execution flow
-4. More robust request and response helpers
-5. Better examples and documentation as the feature set grows
+1. Context propagation for handlers and middleware
+2. Middleware registration and execution flow
+3. More robust request and response helpers
+4. Better examples and documentation as the feature set grows
 
 ## Contributing
 

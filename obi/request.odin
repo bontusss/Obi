@@ -50,7 +50,7 @@ Parser :: struct {
 }
 
 // parse_request is a function that parses an HTTP request from the given raw data and returns a Request struct and a Parse_Error.
-parse_request :: proc(raw: []u8) -> (Request, Parse_Error) {
+parse_request :: proc(raw: []u8) -> (Request, int, Parse_Error) {
 	parser := Parser {
 		data = raw,
 	}
@@ -62,31 +62,31 @@ parse_request :: proc(raw: []u8) -> (Request, Parse_Error) {
 	line, ok := read_line(&parser)
 	// fmt.println("line:", string(line))
 	if !ok {
-		return req, .Incomplete
+		return req, parser.pos, .Incomplete
 	}
 
 	if err := parse_request_line(&req, line); err != .None {
-		return req, err
+		return req, parser.pos, err
 	}
 
 	if err := parse_headers(&parser, &req); err != .None {
-		return req, err
+		return req, parser.pos, err
 	}
 
 	if value, ok := header_value(req.headers[:], "content-length"); ok {
 		n, ok := parse_uint(value)
 		if !ok {
-			return req, .Bad_Content_Length
+			return req, parser.pos, .Bad_Content_Length
 		}
 
 		if parser.pos + n > len(raw) {
-			return req, .Incomplete
+			return req, parser.pos, .Incomplete
 		}
 
 		req.body = raw[parser.pos:parser.pos + n]
 	}
 
-	return req, .None
+	return req, parser.pos, .None
 }
 
 // parse_method is a function that parses the HTTP method from a string and returns the corresponding Method enum value and a boolean indicating success.
@@ -169,7 +169,7 @@ parse_headers :: proc(p: ^Parser, req: ^Request) -> Parse_Error {
 }
 
 // header_value is a function that retrieves the value of a header with the specified key.
-@(private="file")
+@(private)
 header_value :: proc(headers: []Header, key: string) -> ([]u8, bool) {
 	for h in headers {
 		if equal_fold_string(string(h.name), key) {
@@ -181,7 +181,35 @@ header_value :: proc(headers: []Header, key: string) -> ([]u8, bool) {
 }
 
 // equal_fold_string is a function that compares two strings case-insensitively.
+@(private)
 equal_fold_string :: proc(a, b: string) -> bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i in 0..<len(a) {
+		x := a[i]
+		y := b[i]
+
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+
+		if x != y {
+			return false
+		}
+	}
+
+	return true
+}
+
+// equal_fold is a function that compares two byte slices case-insensitively.
+@(private)
+equal_fold :: proc(a, b: []u8) -> bool {
 	if len(a) != len(b) {
 		return false
 	}

@@ -46,6 +46,8 @@ status_text :: proc(status: Status) -> string {
 	return "Unknown"
 }
 
+// response_init is a function that initializes a new Response struct with the given TCP socket, default status, and empty headers and body.
+@(private)
 response_init :: proc(client: net.TCP_Socket) -> Response {
 	return Response {
 		client = client,
@@ -55,16 +57,35 @@ response_init :: proc(client: net.TCP_Socket) -> Response {
 	}
 }
 
+// response_destroy is a function that cleans up the resources associated with a Response struct, including its headers and body.
+@(private)
 response_destroy :: proc(res: ^Response) {
 	delete(res.headers)
 	delete(res.body)
 }
 
+// send_status is a function that sets the status of a Response struct.
+// 
+// example:
+//```odin
+// res := response_init(client_socket)
+// send_status(&res, .Not_Found)
+//```
 send_status :: proc(res: ^Response, status: Status) {
 	if res.written do return // prevent writing to the response after it has been sent
 	res.status = status
 }
 
+// response_header is a function that adds or updates a header in the Response struct.
+// If the header already exists, it updates its value; otherwise, it appends a new
+// header to the list of headers.
+//
+// example:
+//```odin
+// res := response_init(client_socket)
+// response_header(&res, "Content-Type", "application/json")
+// response_header(&res, "X-Custom-Header", "CustomValue")
+//```
 response_header :: proc(res: ^Response, key, value: string) {
 	if res.written do return
 
@@ -81,21 +102,44 @@ response_header :: proc(res: ^Response, key, value: string) {
 	})
 }
 
+// response_write is a function that appends data to the body of the Response struct.
+// It prevents writing to the response after it has been sent.
+@(private)
 response_write :: proc(res: ^Response, data: []u8) {
 	if res.written do return // prevent writing to the response after it has been sent
 	append(&res.body, ..data)
 }
 
+// response_write_string is a function that appends a string to the body of the Response struct.
+// It prevents writing to the response after it has been sent.
+@(private)
 response_write_string :: proc(res: ^Response, s: string) {
 	if res.written do return // prevent writing to the response after it has been sent
 	append(&res.body, ..transmute([]u8)s)
 }
 
+// send_text is a function that sets the "Content-Type" header to "text/plain; charset=utf-8" and appends the given text to the body of the Response struct.
+// 
+// example:
+// ```odin
+// res := response_init(client.socket)
+// send_text(&res, "Hello, World!")
+// response_send(&res)
+// ```
 send_text :: proc(res: ^Response, text: string) {
 	response_header(res, "Content-Type", "text/plain; charset=utf-8")
 	response_write_string(res, text)
 }
 
+// response_send is a function that sends the HTTP response to the client.
+// It returns a net.TCP_Send_Error indicating the result of the operation.
+//
+// example:
+// ```odin
+// res := response_init(client.socket)
+// send_text(&res, "Hello, World!")
+// response_send(&res)
+// ```
 response_send :: proc(res: ^Response) -> net.TCP_Send_Error {
 	if res.written {
 		return .None
@@ -115,6 +159,7 @@ response_send :: proc(res: ^Response) -> net.TCP_Send_Error {
 
 // write_response is a function that writes the given HTTP response to the specified TCP socket.
 // It returns a net.TCP_Send_Error indicating the result of the operation.
+@(private)
 write_response :: proc(res: ^Response) -> net.TCP_Send_Error {
 	socket_write_string(
 		res.client,
@@ -149,12 +194,21 @@ write_response :: proc(res: ^Response) -> net.TCP_Send_Error {
 
 	return .None
 }
-
+// socket_write_string is a function that writes a string to the specified TCP socket.
+// It returns a net.TCP_Send_Error indicating the result of the operation.
+// The difference between this and socket_write is that this function converts the string to a slice of bytes.
+//
+// example:
+// ```odin
+// socket_write_string(client, "Hello, World!")
+// ```
 @(private)
 socket_write_string :: proc(client: net.TCP_Socket, s: string) -> net.TCP_Send_Error {
 	return socket_write(client, transmute([]u8)s)
 }
 
+// socket_write is a function that writes a slice of bytes to the specified TCP socket.
+// It returns a net.TCP_Send_Error indicating the result of the operation.
 @(private)
 socket_write :: proc(client: net.TCP_Socket, data: []u8) -> net.TCP_Send_Error {
 	sent := 0

@@ -22,18 +22,30 @@ Server :: struct {
 
 
 Serve_Error :: enum {
+	// None indicates that the server is running successfully.
     None,
+	// Accept_Failed indicates that the server failed to accept a new connection.
     Accept_Failed,
-}
-
-Listen_And_ServeError :: enum {
-	None,
-	Listen_Failed,
-	Accept_Failed,
+	// Network_Unreachable indicates that the server failed to listen on the specified address and port.
 	Network_Unreachable,
 }
 
+Listen_And_ServeError :: enum {
+	// None indicates that the server is running successfully.
+	None,
+	// Listen_Failed indicates that the server failed to listen on the specified address and port.
+	Listen_Failed,
+	// Accept_Failed indicates that the server failed to accept a new connection.
+	Accept_Failed,
+}
 
+
+// new_server is a function that creates a new server instance.
+//
+// Example:
+// ```odin
+// server := new_server()
+// ```
 new_server :: proc() -> (Server) {
 	return Server{
 		router = router_init(),
@@ -41,6 +53,22 @@ new_server :: proc() -> (Server) {
 	}
 }
 
+// listen is a function that listens for incoming connections on the specified address and port.
+// It returns a net.Listen_Error indicating the result of the operation.
+//
+// Example:
+// ```odin
+// server, err := new_server()
+// if err != Serve_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return .Accept_Failed
+// }
+// err = listen(&server, "localhost", 8080)
+// if err != Serve_Error.None {
+//     fmt.eprintln("listen: ", err)
+//     return .Listen_Failed
+// }
+// ```
 listen :: proc(server: ^Server, address: string, port: int) -> net.Listen_Error {
 	endpoint := net.Endpoint{address = net.parse_address(address), port = port}
 	socket, err := net.listen_tcp(endpoint)
@@ -56,12 +84,16 @@ listen :: proc(server: ^Server, address: string, port: int) -> net.Listen_Error 
 // 
 // Example:
 // ```odin
-// server, err := new_server("localhost", 8080)
+// server, err := new_server()
 // if err != net.Listen_Error.None {
 //     fmt.eprintln("new_server: ", err)
 //     return
 // }
-// serve(&server)
+// err = serve(&server)
+// if err != Serve_Error.None {
+//     fmt.eprintln("serve: ", err)
+//     return .Accept_Failed
+// }
 // ```
 serve :: proc(server: ^Server) -> Serve_Error {
 	if server.log {
@@ -99,6 +131,13 @@ serve :: proc(server: ^Server) -> Serve_Error {
 	return .None
 }
 
+// spawn_connection is a function that spawns a new connection to the server.
+// It creates a new connection instance and handles the connection in a new thread.
+//
+// Example:
+// ```odin
+// spawn_connection(&server, socket)
+// ```
 @(private="file")
 spawn_connection :: proc(server: ^Server, socket: net.TCP_Socket) {
 	client := new(Connection)
@@ -115,17 +154,18 @@ spawn_connection :: proc(server: ^Server, socket: net.TCP_Socket) {
 // 
 // Example:
 // ```odin
-// server, err := new_server("localhost", 8080)
+// server, err := new_server()
 // if err != net.Listen_Error.None {
 //     fmt.eprintln("new_server: ", err)
-//     return
+//     return .Listen_Failed
+// }
+// err = listen(&server, "localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("listen: ", err)
+//     return .Listen_Failed
 // }
 //
-// // Start serving in a separate thread
-// thread.run_with_poly_data(&server, serve)
-// // ...
-// // Stop the server after some time
-// server.close()
+// close(&server)
 // ```
 close :: proc(server: ^Server) {
 	if !server.running do return
@@ -194,6 +234,110 @@ post :: proc(server: ^Server, path: string, handler: Handler) {
 	router_post(&server.router, path, handler)
 }
 
+// put registers a handler for the specified path using the PUT method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// put(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+put :: proc(server: ^Server, path: string, handler: Handler) {
+	router_put(&server.router, path, handler)
+}
+
+// del registers a handler for the specified path using the DELETE method.
+// this proc cant be named delete because it collides with the built-in delete identifier.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+
+// delete(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+del :: proc(server: ^Server, path: string, handler: Handler) {
+	router_delete(&server.router, path, handler)
+}
+// patch registers a handler for the specified path using the PATCH method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// patch(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+patch :: proc(server: ^Server, path: string, handler: Handler) {
+	router_patch(&server.router, path, handler)
+}
+
+// options registers a handler for the specified path using the OPTIONS method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// options(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+options :: proc(server: ^Server, path: string, handler: Handler) {
+	router_options(&server.router, path, handler)
+}
+
+// head registers a handler for the specified path using the HEAD method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// head(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+head :: proc(server: ^Server, path: string, handler: Handler) {
+	router_head(&server.router, path, handler)
+}
+
+// delete registers a handler for the specified path using the DELETE method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// delete(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
 // dump_routes is a function that prints the registered routes of the given router to the console.
 @(private="file")
 dump_routes :: proc(router: ^Router) {

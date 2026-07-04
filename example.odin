@@ -8,7 +8,7 @@ main :: proc() {
 	server := obi.new_server()
 	server.log = true // enable logging for the server
 
-	obi.get(&server, "/hello", proc(req: ^obi.Request, res: ^obi.Response) {
+	obi.del(&server, "/hello", proc(req: ^obi.Request, res: ^obi.Response) {
 		res.status = .OK
 		obi.send_text(res, "Hello, World!")
 	})

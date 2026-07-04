@@ -1,32 +1,49 @@
 package obi
 
-import "core:net"
 import "core:fmt"
+import "core:net"
 import "core:time"
 
 BUFFER_SIZE :: 4096
 
 // Connection is a struct that represents a connection to a client, with its router, socket, and buffer.
 Connection :: struct {
+	// router is a pointer to the Router that will handle the requests for this connection.
+	// It is used to find the appropriate handler for each request based on the request method and path.
 	router: ^Router,
+
+	// socket is the TCP socket that represents the connection to the client.
+	// It is used to read data from and write data to the client.
 	socket: net.TCP_Socket,
+
+	// buffer is a dynamic array of bytes that holds the data read from the client.
+	// It is used to accumulate data until a complete request can be parsed.
 	buffer: [dynamic]u8,
-	log:    bool, // indicates if the connection should log requests and responses
+
+	// log is a boolean that indicates whether the connection should log requests and responses.
+	log:    bool,
 }
 
+// connection_init is a function that initializes a new Connection struct with the given TCP socket and log flag.
 connection_init :: proc(socket: net.TCP_Socket, log: bool) -> Connection {
 	return Connection{socket = socket, buffer = make([dynamic]u8), log = log}
 }
 
+// connection_destroy is a function that cleans up the resources associated with a Connection struct.
+@(private = "file")
 connection_destroy :: proc(conn: ^Connection) {
 	delete(conn.buffer)
 	net.close(conn.socket)
 }
 
+// connection_clear_buffer is a function that clears the buffer of a Connection struct, removing all accumulated data.
+@(private = "file")
 connection_clear_buffer :: proc(conn: ^Connection) {
 	clear(&conn.buffer)
 }
 
+// request_destroy is a function that cleans up the resources associated with a Request struct, including its headers and parameters.
+@(private = "file")
 request_destroy :: proc(req: ^Request) {
 	delete(req.headers)
 	delete(req.params)
@@ -37,40 +54,43 @@ request_destroy :: proc(req: ^Request) {
 @(private)
 handle_connection :: proc(conn: ^Connection) {
 	defer connection_destroy(conn)
-	start := time.now()
 	recv_buffer: [BUFFER_SIZE]u8
 
 	for {
-		n, err := net.recv_tcp(conn.socket, recv_buffer[:])
-		if err != .None || n == 0 {
-			break
-		}
-
-		append(&conn.buffer, ..recv_buffer[:n])
-
-		req, parse_err := parse_request(conn.buffer[:])
-		defer request_destroy(&req) // fires on continue, return, everything
+		req, consumed, parse_err := parse_request(conn.buffer[:])
+		defer request_destroy(&req)
 
 		switch parse_err {
 		case .Incomplete:
+			n, err := net.recv_tcp(conn.socket, recv_buffer[:])
+			if err != .None || n == 0 {
+				return
+			}
+
+			append(&conn.buffer, ..recv_buffer[:n])
 			continue
 
 		case .Bad_Request_Line, .Bad_Header, .Bad_Content_Length:
 			res := response_init(conn.socket)
-			defer response_destroy(&res)
 			send_status(&res, .Bad_Request)
 			send_text(&res, "400 Bad Request")
 
 			_ = response_send(&res)
 
+			response_destroy(&res)
 			free_all(context.temp_allocator)
 			return
 
 		case .None:
+			start := time.now()
 			res := response_init(conn.socket)
-			defer response_destroy(&res)			
+			defer response_destroy(&res)
 
-			if route, params, ok, path_exists := router_find(conn.router, req.method, req.path); ok {
+			should_close := connection_should_close(&req)
+			if should_close do response_header(&res, "Connection", "close")
+
+			if route, params, ok, path_exists := router_find(conn.router, req.method, req.path);
+			   ok {
 				req.params = params
 				route.handler(&req, &res)
 			} else if path_exists {
@@ -81,21 +101,44 @@ handle_connection :: proc(conn: ^Connection) {
 				send_text(&res, "404 Not Found")
 			}
 
-			_ = response_send(&res)
+			send_err := response_send(&res)
 
 			if conn.log do log_request(&req, &res, start)
+			connection_consume(conn, consumed)
 
 			free_all(context.temp_allocator)
 
-			// HTTP/1.0 style for now: one request per connection.
-			return
+			if send_err != .None || should_close do return
+			continue
 		}
 	}
 }
 
-// log_request is a function that logs the details of an HTTP request and its corresponding response, 
+// connection_consume is a function that removes the consumed bytes from the buffer of a Connection struct.
+// It is used to remove the bytes that have already been processed by the parser.
+connection_consume :: proc(conn: ^Connection, n: int) {
+	remainig := len(conn.buffer) - n
+
+	if remainig > 0 {
+		copy(conn.buffer[:remainig], conn.buffer[n:])
+	}
+
+	resize(&conn.buffer, remainig)
+}
+
+// connection_should_close is a function that determines whether the connection should be closed based on the "Connection" header of the request.
+// If the "Connection" header is set to "close", the connection will be closed after the response is sent.
+connection_should_close :: proc(req: ^Request) -> bool {
+	if value, ok := header_value(req.headers[:], "connection"); ok {
+		return equal_fold(value, transmute([]u8)string("close"))
+	}
+
+	return false
+}
+
+// log_request is a function that logs the details of an HTTP request and its corresponding response,
 // including the method, path, status code, response size, and duration.
-// Sample log output: 
+// Sample log output:
 // ```bash
 // [127, 0, 0, 1]:36960 GET /users/42 -> 200 (422.9µs)
 // ```

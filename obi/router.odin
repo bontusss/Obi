@@ -101,6 +101,36 @@ router_post :: proc(router: ^Router, path: string, handler: Handler) {
 	router_add(router, .POST, path, handler)
 }
 
+// router_put is a function that registers a handler for the specified path using the PUT method.
+@(private)
+router_put :: proc(router: ^Router, path: string, handler: Handler) {
+	router_add(router, .PUT, path, handler)
+}
+
+// router_patch is a function that registers a handler for the specified path using the PATCH method.
+@(private)
+router_patch :: proc(router: ^Router, path: string, handler: Handler) {
+	router_add(router, .PATCH, path, handler)
+}
+
+// router_delete is a function that registers a handler for the specified path using the DELETE method.
+@(private)
+router_delete :: proc(router: ^Router, path: string, handler: Handler) {
+	router_add(router, .DELETE, path, handler)
+}
+
+// router_options is a function that registers a handler for the specified path using the OPTIONS method.
+@(private)
+router_options :: proc(router: ^Router, path: string, handler: Handler) {
+	router_add(router, .OPTIONS, path, handler)
+}
+
+// router_head is a function that registers a handler for the specified path using the HEAD method.
+@(private)
+router_head :: proc(router: ^Router, path: string, handler: Handler) {
+	router_add(router, .HEAD, path, handler)
+}
+
 @(private)
 router_add :: proc(
 	router: ^Router,
@@ -115,6 +145,7 @@ router_add :: proc(
 		handler  = handler,
 	})
 }
+
 
 @(private)
 parse_route :: proc(path: string) -> [dynamic]Segment {
