@@ -19,14 +19,7 @@ Connection :: struct {
 	// buffer is a dynamic array of bytes that holds the data read from the client.
 	// It is used to accumulate data until a complete request can be parsed.
 	buffer: [dynamic]u8,
-
-	// log is a boolean that indicates whether the connection should log requests and responses.
-	log:    bool,
-}
-
-// connection_init is a function that initializes a new Connection struct with the given TCP socket and log flag.
-connection_init :: proc(socket: net.TCP_Socket, log: bool) -> Connection {
-	return Connection{socket = socket, buffer = make([dynamic]u8), log = log}
+	server: ^Server,
 }
 
 // connection_destroy is a function that cleans up the resources associated with a Connection struct.
@@ -82,28 +75,37 @@ handle_connection :: proc(conn: ^Connection) {
 			return
 
 		case .None:
-			start := time.now()
 			res := response_init(conn.socket)
 			defer response_destroy(&res)
 
 			should_close := connection_should_close(&req)
 			if should_close do response_header(&res, "Connection", "close")
 
-			if route, params, ok, path_exists := router_find(conn.router, req.method, req.path);
-			   ok {
-				req.params = params
-				route.handler(&req, &res)
-			} else if path_exists {
-				send_status(&res, .Method_Not_Allowed)
-				send_text(&res, "405 Method Not Allowed")
-			} else {
-				send_status(&res, .Not_Found)
-				send_text(&res, "404 Not Found")
+			route, params, ok, path_exists := router_find(conn.router, req.method, req.path)
+
+			handlers := make([dynamic]Handler, context.temp_allocator)
+			append_elems(&handlers, ..conn.server.middleware[:])
+
+			ctx := Context {
+				req        = &req,
+				res        = &res,
+				index      = -1,
+				middleware = handlers[:],
 			}
+
+			if ok {
+				req.params = params
+				ctx.route = route.handler
+			} else if path_exists {
+				ctx.route = method_not_allowed_handler
+			} else {
+				ctx.route = not_found_handler
+			}
+
+			next(&ctx)
 
 			send_err := response_send(&res)
 
-			if conn.log do log_request(&req, &res, start)
 			connection_consume(conn, consumed)
 
 			free_all(context.temp_allocator)
@@ -112,6 +114,18 @@ handle_connection :: proc(conn: ^Connection) {
 			continue
 		}
 	}
+}
+
+@(private)
+not_found_handler :: proc(ctx: ^Context) {
+	status(ctx, .Not_Found)
+	text(ctx, "404 Not Found")
+}
+
+@(private)
+method_not_allowed_handler :: proc(ctx: ^Context) {
+	status(ctx, .Method_Not_Allowed)
+	text(ctx, "405 Method Not Allowed")
 }
 
 // connection_consume is a function that removes the consumed bytes from the buffer of a Connection struct.

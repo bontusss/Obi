@@ -15,8 +15,26 @@ Route :: struct {
 	path:    string,
 
 	// handler is the function that will be called when a request matches the method and path.
-	handler: Handler,
+	handler: Route_Handler,
 }
+
+Handler :: struct {
+	callback: Handler_Proc,
+	data: rawptr,
+}
+
+// Handler is a type that represents a function that handles an HTTP request and generates an HTTP response.
+Handler_Proc :: #type proc(ctx: ^Context, data: rawptr = nil)
+
+Route_Handler :: #type proc(ctx: ^Context)
+
+// Middleware_Handler :: #type proc(ctx: ^Context, data: rawptr)
+
+// Middleware :: struct {
+//     procedure: Middleware_Handler,
+//     data: rawptr,
+// }
+
 
 Method :: enum {
     GET,
@@ -73,9 +91,6 @@ Router :: struct {
 	routes: [dynamic]Route,
 }
 
-// Handler is a type that represents a function that handles an HTTP request and generates an HTTP response.
-Handler :: proc(req: ^Request, res: ^Response)
-
 // router_init is a function that initializes a new Router with an empty list of routes.
 router_init :: proc() -> Router {
 	return Router{routes = make([dynamic]Route)}
@@ -91,43 +106,43 @@ router_destroy :: proc(router: ^Router) {
 
 // router_get is a function that registers a handler for the specified path using the GET method.
 @(private)
-router_get :: proc(router: ^Router, path: string, handler: Handler) {
+router_get :: proc(router: ^Router, path: string, handler: Route_Handler) {
 	router_add(router, .GET, path, handler)
 }
 
 // router_post is a function that registers a handler for the specified path using the POST method.
 @(private)
-router_post :: proc(router: ^Router, path: string, handler: Handler) {
+router_post :: proc(router: ^Router, path: string, handler: Route_Handler) {
 	router_add(router, .POST, path, handler)
 }
 
 // router_put is a function that registers a handler for the specified path using the PUT method.
 @(private)
-router_put :: proc(router: ^Router, path: string, handler: Handler) {
+router_put :: proc(router: ^Router, path: string, handler: Route_Handler) {
 	router_add(router, .PUT, path, handler)
 }
 
 // router_patch is a function that registers a handler for the specified path using the PATCH method.
 @(private)
-router_patch :: proc(router: ^Router, path: string, handler: Handler) {
+router_patch :: proc(router: ^Router, path: string, handler: Route_Handler) {
 	router_add(router, .PATCH, path, handler)
 }
 
 // router_delete is a function that registers a handler for the specified path using the DELETE method.
 @(private)
-router_delete :: proc(router: ^Router, path: string, handler: Handler) {
+router_delete :: proc(router: ^Router, path: string, handler: Route_Handler) {
 	router_add(router, .DELETE, path, handler)
 }
 
 // router_options is a function that registers a handler for the specified path using the OPTIONS method.
 @(private)
-router_options :: proc(router: ^Router, path: string, handler: Handler) {
+router_options :: proc(router: ^Router, path: string, handler: Route_Handler) {
 	router_add(router, .OPTIONS, path, handler)
 }
 
 // router_head is a function that registers a handler for the specified path using the HEAD method.
 @(private)
-router_head :: proc(router: ^Router, path: string, handler: Handler) {
+router_head :: proc(router: ^Router, path: string, handler: Route_Handler) {
 	router_add(router, .HEAD, path, handler)
 }
 
@@ -136,7 +151,7 @@ router_add :: proc(
 	router: ^Router,
 	method: Method,
 	path: string,
-	handler: Handler,
+	handler: Route_Handler,
 ) {
 	append(&router.routes, Route{
 		method   = method,
@@ -224,4 +239,131 @@ router_find :: proc(router: ^Router, method: Method, path: []u8) -> (^Route, []P
     }
 
     return nil, nil, false, path_exists
+}
+
+// get registers a handler for the specified path using the GET method.
+//
+// Example:
+//
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// get(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+get :: proc(server: ^Server, path: string, handler: Route_Handler) {
+	router_get(&server.router, path, handler)
+}
+
+// post registers a handler for the specified path using the POST method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return	
+// }
+//
+// post(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+post :: proc(server: ^Server, path: string, handler: Route_Handler) {
+	router_post(&server.router, path, handler)
+}
+
+// put registers a handler for the specified path using the PUT method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// put(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+put :: proc(server: ^Server, path: string, handler: Route_Handler) {
+	router_put(&server.router, path, handler)
+}
+
+// del registers a handler for the specified path using the DELETE method.
+// this proc cant be named delete because it collides with the built-in delete identifier.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+
+// delete(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+del :: proc(server: ^Server, path: string, handler: Route_Handler) {
+	router_delete(&server.router, path, handler)
+}
+// patch registers a handler for the specified path using the PATCH method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// patch(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+patch :: proc(server: ^Server, path: string, handler: Route_Handler) {
+	router_patch(&server.router, path, handler)
+}
+
+// options registers a handler for the specified path using the OPTIONS method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// options(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+options :: proc(server: ^Server, path: string, handler: Route_Handler) {
+	router_options(&server.router, path, handler)
+}
+
+// head registers a handler for the specified path using the HEAD method.
+//
+// Example:
+// ```odin
+// server, err := new_server("localhost", 8080)
+// if err != net.Listen_Error.None {
+//     fmt.eprintln("new_server: ", err)
+//     return
+// }
+//
+// head(&server, "/hello", proc(req: Request, res: Response) {
+//     res.write_string("Hello, World!")
+// })
+// ```
+head :: proc(server: ^Server, path: string, handler: Route_Handler) {
+	router_head(&server.router, path, handler)
 }

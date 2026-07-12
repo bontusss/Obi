@@ -1,27 +1,31 @@
+
 package obi
 
-import "core:net"
+import "core:encoding/json"
 import "core:fmt"
+import "core:net"
 
 // Response is a struct that represents an HTTP response with its status, headers, and body.
 Response :: struct {
 	client:  net.TCP_Socket,
-    status:  Status,
-    headers: [dynamic]Header,   // reuse the Header struct from request.odin
-    body:    [dynamic]u8,
+	status:  Status,
+	headers: [dynamic]Header, // reuse the Header struct from request.odin
+	body:    [dynamic]u8,
 	written: bool, // indicates if the response has been written to the client
 }
 
+
 // Status is an enum that represents the possible HTTP status codes for a response.
 Status :: enum int {
-	OK                  = 200,
-	Created             = 201,
-	No_Content          = 204,
-
-	Bad_Request         = 400,
-	Not_Found           = 404,
-	Method_Not_Allowed  = 405,
-
+	OK                    = 200,
+	Created               = 201,
+	No_Content            = 204,
+	Bad_Request           = 400,
+	Not_Found             = 404,
+	Method_Not_Allowed    = 405,
+	Unauthorized          = 401,
+	Forbidden             = 403,
+	Too_Many_Requests     = 429,
 	Internal_Server_Error = 500,
 }
 
@@ -41,6 +45,12 @@ status_text :: proc(status: Status) -> string {
 		return "Method Not Allowed"
 	case .Internal_Server_Error:
 		return "Internal Server Error"
+	case .Unauthorized:
+		return "Unauthorized"
+	case .Forbidden:
+		return "Forbidden"
+	case .Too_Many_Requests:
+		return "Too Many Requests"
 	}
 
 	return "Unknown"
@@ -65,7 +75,7 @@ response_destroy :: proc(res: ^Response) {
 }
 
 // send_status is a function that sets the status of a Response struct.
-// 
+//
 // example:
 //```odin
 // res := response_init(client_socket)
@@ -96,10 +106,7 @@ response_header :: proc(res: ^Response, key, value: string) {
 		}
 	}
 
-	append(&res.headers, Header{
-		name  = transmute([]u8)key,
-		value = transmute([]u8)value,
-	})
+	append(&res.headers, Header{name = transmute([]u8)key, value = transmute([]u8)value})
 }
 
 // response_write is a function that appends data to the body of the Response struct.
@@ -119,7 +126,7 @@ response_write_string :: proc(res: ^Response, s: string) {
 }
 
 // send_text is a function that sets the "Content-Type" header to "text/plain; charset=utf-8" and appends the given text to the body of the Response struct.
-// 
+//
 // example:
 // ```odin
 // res := response_init(client.socket)
@@ -163,17 +170,10 @@ response_send :: proc(res: ^Response) -> net.TCP_Send_Error {
 write_response :: proc(res: ^Response) -> net.TCP_Send_Error {
 	socket_write_string(
 		res.client,
-		fmt.tprintf(
-			"HTTP/1.1 %d %s\r\n",
-			int(res.status),
-			status_text(res.status),
-		),
+		fmt.tprintf("HTTP/1.1 %d %s\r\n", int(res.status), status_text(res.status)),
 	) or_return
 
-	socket_write_string(
-		res.client,
-		fmt.tprintf("Content-Length: %d\r\n", len(res.body)),
-	) or_return
+	socket_write_string(res.client, fmt.tprintf("Content-Length: %d\r\n", len(res.body))) or_return
 
 	for header in res.headers {
 		if equal_fold_string(string(header.name), "content-length") {
@@ -248,4 +248,64 @@ has_header :: proc(headers: []Header, key: string) -> bool {
 	}
 
 	return false
+}
+
+@(private)
+starts_with_content_type :: proc(content_type, expected: string) -> bool {
+	if len(content_type) < len(expected) {
+		return false
+	}
+
+	return content_type[:len(expected)] == expected
+}
+
+bind_json :: proc(ctx: ^Context, value: ^$T) -> JSON_Error {
+	if len(ctx.req.body) == 0 {
+		return .Empty_Body
+	}
+
+	if content_type, ok := header_value(ctx.req.headers[:], "content-type"); ok {
+		if !starts_with_content_type(string(content_type), "application/json") {
+			return .Invalid_Content_Type
+		}
+	} else {
+		return .Invalid_Content_Type
+	}
+
+	if err := json.unmarshal(ctx.req.body, value); err != nil {
+		return .Invalid_JSON
+	}
+
+	return .None
+}
+
+send_json :: proc(ctx: ^Context, status_code: Status, value: any) {
+	body: []u8
+	err: json.Marshal_Error
+
+	switch v in value {
+	case h:
+		body, err = marshal_h(v)
+
+	case:
+		body, err = json.marshal(value)
+	}
+
+	if err != nil {
+		fmt.eprintln("json marshal error:", err)
+		status(ctx, .Internal_Server_Error)
+		text(ctx, "failed to encode json")
+		return
+	}
+	defer delete(body)
+
+	status(ctx, status_code)
+	response_header(ctx.res, "Content-Type", "application/json; charset=utf-8")
+	send(ctx.res, body)
+}
+
+send :: proc(res: ^Response, body: []u8) {
+	response_header(res, "Content-Length", fmt.tprintf("%d", len(body)))
+	response_write(res, body)
+	response_send(res)
 }

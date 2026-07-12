@@ -1,7 +1,5 @@
 package obi
 
-import "core:fmt"
-
 // Header is a struct that represents an HTTP header with its name and value.
 // an example of a header is "Content-Type: text/html"
 @(private)
@@ -235,7 +233,7 @@ equal_fold :: proc(a, b: []u8) -> bool {
 }
 
 // index_byte is a function that finds the index of the first occurrence of a byte in a byte slice.
-@(private="file")
+@(private)
 index_byte :: proc(data: []u8, b: u8) -> int {
 	for i := 0; i < len(data); i += 1 {
 		if data[i] == b {
