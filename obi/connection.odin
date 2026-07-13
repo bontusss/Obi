@@ -86,6 +86,13 @@ handle_connection :: proc(conn: ^Connection) {
 			handlers := make([dynamic]Handler, context.temp_allocator)
 			append_elems(&handlers, ..conn.server.middleware[:])
 
+			if ok {
+				for m in route.middleware {
+					append(&handlers, m)
+				}
+				req.params = params
+			}
+
 			ctx := Context {
 				req        = &req,
 				res        = &res,

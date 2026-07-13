@@ -146,8 +146,17 @@ spawn_connection :: proc(server: ^Server, socket: net.TCP_Socket) {
 	thread.run_with_poly_data(client, handle_connection)
 }
 
-use :: proc(server: ^Server, handler: Handler) {
+// use :: proc(server: ^Server, handler: Handler) {
+// 	append(&server.middleware, handler)
+// }
+
+use :: proc{use_server, use_group}
+use_server :: proc(server: ^Server, handler: Handler) {
 	append(&server.middleware, handler)
+}
+
+use_group :: proc(group: ^Group, handler: Handler) {
+	append(&group.middleware, handler)
 }
 
 // close is a function that closes the server and stops it from accepting new connections.
@@ -193,12 +202,3 @@ run :: proc(server: ^Server, address := "127.0.0.1", port := 8000) -> Run_Error 
 	return nil
 }
 
-
-// dump_routes is a function that prints the registered routes of the given router to the console.
-@(private)
-print_routes :: proc(router: ^Router) {
-	fmt.println("available routes:")
-	for route in router.routes {
-		fmt.printfln("%-6s %s", method_to_string(route.method), route.path)
-	}
-}

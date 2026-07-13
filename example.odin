@@ -1,5 +1,3 @@
-#+feature dynamic-literals
-
 package main
 
 import "core:fmt"
@@ -17,68 +15,73 @@ main :: proc() {
 	obi.use(&server, obi.cors("*"))
 	obi.use(&server, obi.request_id())
 
+	// group prefix deliberately has a trailing slash, route path has a
+	// leading slash — tests whether double-slash concatenation still
+	// routes correctly (it should, since split_path filters empty segments)
+	api := obi.group(&server, "/api/v1/")
+	obi.use(&api, obi.basic_auth("user", "pass"))
+	obi.get(&api, "/users", user_handler)
+
+	// nested group: should inherit api's basic_auth AND require its own
+	// admin_guard, with a prefix of /api/v1/admin
+	admin := obi.group(&api, "/admin")
+
+	admin_guard :: proc(ctx: ^obi.Context, data: rawptr) {
+		fmt.println("admin_guard middleware ran")
+		obi.next(ctx)
+	}
+	obi.use(&admin, obi.Handler{callback = admin_guard, data = nil})
+	obi.get(&admin, "/settings", settings_handler)
+
 	User :: struct {
 		name: string,
 		age:  int,
 	}
 
-	hello :: proc(ctx: ^obi.Context) {
-		obi.status(ctx, obi.Status.OK)
-		obi.text(ctx, "Hello, World!")
-	}
-
-	// exercises: bind_json failure path, H for a hand-built error body,
-	// and a plain struct passed straight to send_json on success
-	create_user :: proc(ctx: ^obi.Context) {
+	user_handler :: proc(c: ^obi.Context) {
 		user: User
-
-		if err := obi.bind_json(ctx, &user); err != .None {
-			h := obi.new_h()
-			defer obi.destroy_h(&h)
-			obi.h_set(&h, "message", obi.json_error_text(err))
-			obi.h_set(&h, "version", "1.0")
-
-			obi.send_json(ctx, .Bad_Request, h)
+		if err := obi.bind_json(c, &user); err != .None {
+			obi.send_json(c, .Bad_Request, obi.json_error_text(err))
 			return
 		}
-
-		obi.send_json(ctx, .OK, user)
+		obi.send_json(c, .OK, user)
 	}
 
-	// exercises: H with a nested value, to confirm marshal recurses correctly
-	info :: proc(ctx: ^obi.Context) {
-		h := obi.new_h()
-		// defer obi.destroy_h(&h)
-
-		obi.h_set(&h, "service", "obi")
-		obi.h_set(&h, "version", "1.0")
-		obi.h_set(&h, "author", User{name = "bontus", age = 0})
-
-		obi.send_json(ctx, .OK, h)
+	settings_handler :: proc(c: ^obi.Context) {
+		obi.send_json(c, .OK, "admin settings")
 	}
 
-	user_handler :: proc(ctx: ^obi.Context) {
-		id, ok := obi.param(ctx, "id")
-		if !ok {
-			obi.status(ctx, obi.Status.Bad_Request)
-			obi.text(ctx, "Missing user ID")
-			return
-		}
-		obi.status(ctx, obi.Status.OK)
-		obi.text(ctx, fmt.tprintf("User ID: %s", id))
+	hello :: proc(c: ^obi.Context) {
+		obi.send_json(c, .OK, "hello")
 	}
 
-	search :: proc(ctx: ^obi.Context) {
-		name, _ := obi.query(ctx, "name")
-		active, _ := obi.query(ctx, "active")
-		obi.text(ctx, fmt.tprintf("name=%s active=%s", name, active))
+	obi.get(&server, "/", hello) // still ungrouped, no auth required
+
+	post_handler :: proc(c: ^obi.Context) {
+		obi.send_json(c, .Created, User{name = "bontus", age = 67})
+	}
+	put_handler :: proc(c: ^obi.Context) {
+		obi.send_json(c, .OK, User{age = 67})
+	}
+	patch_handler :: proc(c: ^obi.Context) {
+		obi.send_json(c, .OK, User{name = "ukandu"})
+	}
+	delete_handler :: proc(c: ^obi.Context) {
+		obi.send_json(c, .No_Content, "deleted")
+	}
+	head_handler :: proc(c: ^obi.Context) {
+		obi.send_json(c, .OK, "head handler")
+	}
+	opions_handler :: proc(c: ^obi.Context) {
+		obi.send_json(c, .OK, "options handler")
 	}
 
-	obi.get(&server, "/", hello)
-	obi.get(&server, "/users/:id", user_handler)
-	obi.get(&server, "/search", search)
-	obi.get(&server, "/info", info)
-	obi.post(&server, "/users", create_user)
+	obi.post(&server, "/post", post_handler)
+	obi.put(&server, "/put", put_handler)
+	obi.patch(&server, "/patch", patch_handler)
+	obi.del(&server, "/delete", delete_handler)
+	obi.head(&server, "/head", head_handler)
+	obi.options(&server, "/options", opions_handler)
 
 	err := obi.run(&server, "127.0.0.1", 8000)
 
