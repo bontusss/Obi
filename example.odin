@@ -2,7 +2,7 @@ package main
 
 import "core:fmt"
 import "core:net"
-
+import "core:time"
 import "obi"
 
 main :: proc() {
@@ -76,6 +76,12 @@ main :: proc() {
 		obi.send_json(c, .OK, "options handler")
 	}
 
+	slow :: proc(c: ^obi.Context) {
+		time.sleep(3 * time.Second)
+		obi.send_json(c, .OK, "finished slowly")
+	}
+
+	obi.get(&server, "/slow", slow)
 	obi.post(&server, "/post", post_handler)
 	obi.put(&server, "/put", put_handler)
 	obi.patch(&server, "/patch", patch_handler)

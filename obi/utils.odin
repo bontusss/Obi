@@ -3,8 +3,20 @@ package obi
 import "core:fmt"
 import "core:net"
 import "core:strings"
+import "core:sys/posix"
 import "core:thread"
 
+Signal :: posix.Signal // SIGINT = 2, SIGTERM = 15, etc.
+
+@(private)
+g_server_for_shutdown: ^Server
+
+@(private)
+handle_shutdown_signal :: proc "c" (sig: posix.Signal) {
+	if g_server_for_shutdown != nil {
+		g_server_for_shutdown.running = false
+	}
+}
 
 @(private)
 join_path :: proc(a: string, b: string) -> string {

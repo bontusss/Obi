@@ -2,6 +2,7 @@ package obi
 
 import "core:fmt"
 import "core:net"
+import "core:sys/posix"
 import "core:thread"
 import "core:time"
 
@@ -16,6 +17,7 @@ Server :: struct {
 	// router is the router that maps HTTP methods and paths to their corresponding handlers.
 	router:       Router,
 	running:      bool, // indicates if the server is running
+	close:        bool, // guards close proc from running twice
 	print_routes: bool, // indicates if the server should log requests and responses
 	middleware:   [dynamic]Handler,
 	idle_timeout: time.Duration,
@@ -159,24 +161,34 @@ use_group :: proc(group: ^Group, handler: Handler) {
 // if err != net.Listen_Error.None {
 //     fmt.eprintln("listen: ", err)
 //     return .Listen_Failed
-// }
-//
-// close(&server)
-// ```
 close :: proc(server: ^Server) {
-	if !server.running do return
+	if server.close do return
+	server.close = true
 	server.running = false
 	net.close(server.socket)
 	thread.pool_finish(&server.pool)
 	thread.pool_destroy(&server.pool)
 	router_destroy(&server.router)
 	for m in server.middleware {
-		if m.data == nil do free(m.data)
+		if m.data != nil do free(m.data)
 	}
 	delete(server.middleware)
 }
 
-
+/*
+One honest tradeoff worth knowing, not fixing today
+A connection sitting idle on a keep-alive, waiting inside recv_tcp for its next request 
+(up to 30-second idle_timeout), is still "in-flight" from the pool's perspective — its worker 
+thread hasn't returned from handle_connection yet. pool_finish will wait for it. In the worst case, 
+if several clients are mid-keep-alive when signal shutdown happens, 
+the process could take up to idle_timeout seconds to actually exit, not instantly. 
+That's a real, honest limitation — a stricter version would force-close all client sockets 
+on shutdown to cut this short, but that undermines genuinely in-flight requests getting to 
+finish, which is the whole point. Most production servers handle this with a shutdown grace 
+period cap (wait up to N seconds, then force-kill whatever's left, similar to Kubernetes' 
+terminationGracePeriodSeconds) — worth keeping as a future refinement, not required for this 
+to count as "graceful."
+*/
 run :: proc(server: ^Server, address := "127.0.0.1", port := 8000) -> Run_Error {
 	fmt.printfln("Obi is listening on port %d", port)
 
@@ -184,8 +196,18 @@ run :: proc(server: ^Server, address := "127.0.0.1", port := 8000) -> Run_Error 
 		return err
 	}
 
+	// periodic wake-up so the accept loop can notice a shutdown request
+	net.set_option(server.socket, net.Socket_Option.Receive_Timeout, 1 * time.Second)
+
+	g_server_for_shutdown = server
+	posix.signal(.SIGINT, handle_shutdown_signal)
+	posix.signal(.SIGTERM, handle_shutdown_signal)
+
 	if err := serve(server); err != .None {
 		return err
 	}
+
+	close(server)
+
 	return nil
 }
