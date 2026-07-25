@@ -1,38 +1,26 @@
+#+feature dynamic-literals
 package obi
 
 import "core:crypto"
 import "core:encoding/base64"
 import "core:fmt"
+import "core:log"
+import "core:net"
 import "core:strings"
 import "core:time"
+import http "vendor/odin-http"
 
-Cors_Config :: struct {
-	allow_origins: string,
+use :: proc {
+	use_server,
+	use_group,
 }
 
-@(private)
-cors_handler :: proc(ctx: ^Context, data: rawptr) {
-	config := (^Cors_Config)(data)
-	response_header(ctx.res, "Access-Control-Allow-Origin", config.allow_origins)
-	response_header(
-		ctx.res,
-		"Access-Control-Allow-Methods",
-		"GET, POST, PUT, PATCH, DELETE, OPTIONS",
-	)
-	response_header(ctx.res, "Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-	if ctx.req.method == .OPTIONS {
-		status(ctx, .No_Content)
-		return
-	}
-
-	next(ctx)
+use_server :: proc(server: ^Server, handler: Handler) {
+	append(&server.middleware, handler)
 }
 
-cors :: proc(allow_origins: string) -> Handler {
-	config := new(Cors_Config)
-	config.allow_origins = allow_origins
-	return Handler{callback = cors_handler, data = config}
+use_group :: proc(group: ^Group, handler: Handler) {
+	append(&group.middleware, handler)
 }
 
 generate_request_id :: proc() -> string {
@@ -67,14 +55,15 @@ generate_request_id :: proc() -> string {
 request_id_handler :: proc(ctx: ^Context, data: rawptr) {
 	id := generate_request_id()
 
+	http.headers_set(&ctx.res.inner.headers, "X-Request-ID", id)
 	ctx.request_id = id
-	response_header(ctx.res, "X-Request-ID", id)
 	next(ctx)
 }
 
 request_id :: proc() -> Handler {
 	return Handler{callback = request_id_handler, data = nil}
 }
+
 
 Basic_Auth_Config :: struct {
 	username: string,
@@ -85,12 +74,12 @@ Basic_Auth_Config :: struct {
 @(private)
 basic_auth_handler :: proc(ctx: ^Context, data: rawptr) {
 	config := (^Basic_Auth_Config)(data)
-	auth_header, ok := header_value(ctx.req.headers[:], "authorization")
+
+	auth_header, ok := http.headers_get(ctx.req.inner.headers, "authorization")
 	if !ok {
 		unauthorized(ctx, config)
 		return
 	}
-
 	auth := string(auth_header)
 
 	if !strings.has_prefix(auth, "Basic ") {
@@ -135,7 +124,11 @@ basic_auth_handler :: proc(ctx: ^Context, data: rawptr) {
 
 @(private)
 unauthorized :: proc(ctx: ^Context, config: ^Basic_Auth_Config) {
-	response_header(ctx.res, "WWW-Authenticate", fmt.tprintf("Basic realm=\"%s\"", config.realm))
+	http.headers_set(
+		&ctx.res.inner.headers,
+		"WWW-Authenticate",
+		fmt.tprintf("Basic realm=\"%s\"", config.realm),
+	)
 
 	status(ctx, .Unauthorized)
 	text(ctx, "401 Unauthorized")
@@ -152,7 +145,7 @@ basic_auth :: proc(username, password: string, realm: string = "Restricted") -> 
 @(private)
 real_ip_handler :: proc(ctx: ^Context, data: rawptr) {
 	// Check X-Forwarded-For header (common in proxy setups)
-	if forwarded, ok := header_value(ctx.req.headers[:], "x-forwarded-for"); ok {
+	if forwarded, ok := http.headers_get(ctx.req.inner.headers, "x-forwarded-for"); ok {
 		// X-Forwarded-For can contain multiple IPs, the first is the client
 		forwarded_str := string(forwarded)
 		if comma := strings.index(forwarded_str, ","); comma != -1 {
@@ -160,7 +153,7 @@ real_ip_handler :: proc(ctx: ^Context, data: rawptr) {
 		} else {
 			ctx.client_ip = strings.trim_space(forwarded_str)
 		}
-	} else if real_ip_header, ok := header_value(ctx.req.headers[:], "x-real-ip"); ok {
+	} else if real_ip_header, iok := http.headers_get(ctx.req.inner.headers, "x-real-ip"); iok {
 		ctx.client_ip = string(real_ip_header)
 	} else {
 		// Fallback to connection remote address
@@ -174,14 +167,15 @@ real_ip :: proc() -> Handler {
 	return Handler{callback = real_ip_handler, data = nil}
 }
 
+
 @(private)
 secure_headers_handler :: proc(ctx: ^Context, data: rawptr) {
-	response_header(ctx.res, "X-Frame-Options", "DENY")
-	response_header(ctx.res, "X-XSS-Protection", "1; mode=block")
-	response_header(ctx.res, "X-Content-Type-Options", "nosniff")
-	response_header(ctx.res, "Referrer-Policy", "no-referrer")
-	response_header(
-		ctx.res,
+	http.headers_set(&ctx.res.inner.headers, "X-Frame-Options", "DENY")
+	http.headers_set(&ctx.res.inner.headers, "X-XSS-Protection", "1; mode=block")
+	http.headers_set(&ctx.res.inner.headers, "X-Content-Type-Options", "nosniff")
+	http.headers_set(&ctx.res.inner.headers, "Referrer-Policy", "no-referrer")
+	http.headers_set(
+		&ctx.res.inner.headers,
 		"Strict-Transport-Security",
 		"max-age=31536000; includeSubDomains; preload",
 	)
@@ -192,13 +186,115 @@ secure_headers :: proc() -> Handler {
 	return Handler{callback = secure_headers_handler, data = nil}
 }
 
-logger :: proc() -> Handler {
-	return Handler{callback = logger_handler, data = nil}
+logger :: proc(s: ^Server) -> Handler {
+	return Handler{callback = logger_handler, data = s}
 }
 
 @(private)
 logger_handler :: proc(ctx: ^Context, data: rawptr) {
+	s := (^Server)(data)
+	if s == nil || !s.log_opts.enabled {
+		next(ctx)
+		return
+	}
+
+	// Skip noisy health checks
+	for skip in s.log_opts.skip_paths {
+		if ctx.req.path == skip {
+			next(ctx)
+			return
+		}
+	}
+
 	start := time.now()
 	next(ctx)
-	log_request(ctx.req, ctx.res, start)
+	duration := time.since(start)
+
+	status := ctx.res.inner.status
+	status_color, duration_color, reset, gray, method_color := "", "", "", "", ""
+
+	ms := time.duration_milliseconds(duration)
+	is_slow := ms > 500.0
+
+	if s.log_opts.output == .Terminal {
+		reset = "\x1b[0m"
+		gray = "\x1b[90m"
+		method_color = "\x1b[36m" // cyan
+
+		// Duration: black on white, turns white on red if slow
+		duration_color = "\x1b[30;47m"
+		if is_slow {
+			duration_color = "\x1b[37;41m"
+		}
+
+		code := int(status)
+		switch {
+		case code < 300:
+			status_color = "\x1b[30;42m" // black on green
+		case code < 400:
+			status_color = "\x1b[30;43m" // black on yellow
+		case code < 500:
+			status_color = "\x1b[37;41m" // white on red
+		case:
+			status_color = "\x1b[37;45m" // white on magenta
+		}
+	}
+
+	year, month, day := time.date(time.now())
+	hour, minute, sec := time.clock(time.now())
+
+	client_ip := ctx.client_ip
+	if client_ip == "" {
+		client_ip = fmt.tprintf("%v", ctx.req.inner.client)
+
+		// Remove ":port" for IPv4 endpoints
+		if idx := strings.last_index_byte(client_ip, ':'); idx >= 0 {
+			client_ip = client_ip[:idx]
+		}
+	}
+
+	slow_tag := ""
+	if is_slow && s.log_opts.output == .Terminal {
+		slow_tag = "\x1b[33m[SLOW]\x1b[0m "
+	}
+
+	msg := fmt.tprintf(
+		"%s[obi]%s %04d/%02d/%02d %02d:%02d:%02d | %s%d%s | %s%8.3fms%s | %15s | %s%-7s%s %s%s",
+		gray,
+		reset,
+		year,
+		month,
+		day,
+		hour,
+		minute,
+		sec,
+		status_color,
+		status,
+		reset,
+		duration_color,
+		ms,
+		reset,
+		client_ip,
+		method_color,
+		http_method_str(ctx.req.method),
+		reset,
+		slow_tag,
+		ctx.req.path,
+	)
+
+	if is_slow {
+		log.warnf("obi: slow request %s", msg)
+	}
+
+	obi_log(s, msg)
+}
+
+@(private)
+obi_log :: proc(s: ^Server, msg: string) {
+	if !s.log_opts.enabled do return
+	if s.log_opts.output == .File && s.has_log_file {
+		fmt.fprintln(s.log_file, msg)
+	} else {
+		fmt.println(msg)
+	}
 }

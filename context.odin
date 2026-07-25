@@ -1,25 +1,16 @@
 package obi
 
+import "core:strings"
+import http "vendor/odin-http"
+
 Context :: struct {
 	req:        ^Request,
 	res:        ^Response,
-
-
 	index:      int,
-
-
 	middleware: []Handler,
 	route:      Route_Handler,
 	request_id: string,
 	client_ip:  string,
-}
-
-status :: proc(ctx: ^Context, status: Status) {
-	send_status(ctx.res, status)
-}
-
-text :: proc(ctx: ^Context, text: string) {
-	send_text(ctx.res, text)
 }
 
 param :: proc(ctx: ^Context, key: string) -> (string, bool) {
@@ -36,24 +27,24 @@ query :: proc(ctx: ^Context, key: string) -> (string, bool) {
 	key_bytes := transmute([]u8)key
 
 	for len(query) > 0 {
-		amp := index_byte(query, '&')
+		amp := strings.index_byte(query, '&')
 
-		pair: []u8
+		pair: string
 		if amp == -1 {
 			pair = query
-			query = nil
+			query = ""
 		} else {
 			pair = query[:amp]
 			query = query[amp + 1:]
 		}
 
-		eq := index_byte(pair, '=')
+		eq := strings.index_byte(pair, '=')
 
-		name, value: []u8
+		name, value: string
 
 		if eq == -1 {
 			name = pair
-			value = nil
+			value = ""
 		} else {
 			name = pair[:eq]
 			value = pair[eq + 1:]
@@ -75,8 +66,19 @@ next :: proc(ctx: ^Context) {
 		m.callback(ctx, m.data)
 		return
 	}
-	
+
 	if ctx.route != nil {
 		ctx.route(ctx)
 	}
+}
+
+@(private)
+index_byte :: proc(data: []u8, b: u8) -> int {
+	for i := 0; i < len(data); i += 1 {
+		if data[i] == b {
+			return i
+		}
+	}
+
+	return -1
 }
