@@ -50,6 +50,7 @@ load_log_opts_from_env :: proc() -> Log_Opts {
 		opts.show_routes = false
 	}
 
+	// TODO: logs are not written to file when output is set tp .FILE
 	if strings.compare(os.get_env("OBI_LOG_OUTPUT", context.allocator), "file") == 0 {
 		opts.output = .File
 		opts.file_path = os.get_env("OBI_LOG_FILE", context.allocator)
@@ -105,15 +106,7 @@ bridge :: proc(req: ^http.Request, res: ^http.Response) {
 	}
 
 
-	// split path from query string
 	path := req.url.raw
-	// path := full
-	// query_bytes: []u8
-	// if q := strings.index_byte(full, '?'); q != -1 {
-	// 	path = full[:q]
-	// 	query_bytes = transmute([]u8)full[q + 1:]
-	// }
-
 	rl, ok := req.line.(http.Requestline)
 	if !ok {
 		http.respond(res, http.Status.Internal_Server_Error)

@@ -72,7 +72,51 @@ router_destroy :: proc(router: ^Router) {
 	delete(router.routes)
 }
 
-@(private)
+// @(private)
+// router_find :: proc(
+// 	router: ^Router,
+// 	method: http.Method,
+// 	path: string,
+// ) -> (
+// 	^Route,
+// 	[dynamic]Param,
+// 	bool,
+// 	bool,
+// ) {
+// 	// returns: route, params, matched, method_allowed
+// 	path_segments := split_path(path)
+// 	defer delete(path_segments)
+
+// 	path_exists := false
+
+// 	for &route in router.routes {
+// 		if len(route.segments) != len(path_segments) do continue
+
+// 		matched := true
+// 		for i in 0 ..< len(route.segments) {
+// 			if route.segments[i].kind == .Static && route.segments[i].value != path_segments[i] {
+// 				matched = false
+// 				break
+// 			}
+// 		}
+// 		if !matched do continue
+
+// 		path_exists = true
+// 		if route.method != method do continue
+
+// 		params := make([dynamic]Param)
+// 		for i in 0 ..< len(route.segments) {
+// 			seg := route.segments[i]
+// 			if seg.kind == .Parameter {
+// 				append(&params, Param{key = seg.value, value = path_segments[i]})
+// 			}
+// 		}
+// 		return &route, params, true, true
+// 	}
+
+// 	return nil, nil, false, path_exists
+// }
+//
 router_find :: proc(
 	router: ^Router,
 	method: http.Method,
@@ -84,40 +128,57 @@ router_find :: proc(
 	bool,
 ) {
 	// returns: route, params, matched, method_allowed
-	path_segments := split_path(path)
-	defer delete(path_segments)
+
+	path_segments: [MAX_SEGMENTS]string
+	path_count := split_path_into(path, &path_segments)
 
 	path_exists := false
 
 	for &route in router.routes {
-		if len(route.segments) != len(path_segments) do continue
+		if len(route.segments) != path_count do continue
+
+		matched := true
+		for i in 0 ..< path_count {
+			if route.segments[i].kind == .Static && route.segments[i].value != path_segments[i] {
+				matched = false
+				break
+			}
+		}
+		if !matched do continue
+
+		path_exists = true
+		if route.method != method do continue
 
 		params := make([dynamic]Param)
-		matched := true
-		for i in 0 ..< len(route.segments) {
+		for i in 0 ..< path_count {
 			seg := route.segments[i]
-			switch seg.kind {
-			case .Static:
-				if seg.value != path_segments[i] {matched = false}
-			case .Parameter:
+			if seg.kind == .Parameter {
 				append(&params, Param{key = seg.value, value = path_segments[i]})
 			}
 		}
 
-		if !matched {
-			delete(params)
-			continue
-		}
-
-		path_exists = true
-
-		if route.method == method {
-			return &route, params, true, true
-		}
-		delete(params)
+		return &route, params, true, true
 	}
 
 	return nil, nil, false, path_exists
+}
+
+MAX_SEGMENTS :: 16
+
+@(private)
+split_path_into :: proc(path: string, out: ^[MAX_SEGMENTS]string) -> int {
+	count := 0
+	start := 0
+	for i := 0; i <= len(path); i += 1 {
+		if i == len(path) || path[i] == '/' {
+			if i > start && count < MAX_SEGMENTS {
+				out[count] = path[start:i]
+				count += 1
+			}
+			start = i + 1
+		}
+	}
+	return count
 }
 
 split_path :: proc(path: string) -> [dynamic]string {
@@ -151,7 +212,7 @@ router_put :: proc(router: ^Router, path: string, handler: Route_Handler) {
 }
 
 
-@(private)
+// @(private)
 router_add :: proc(
 	router: ^Router,
 	method: http.Method,
